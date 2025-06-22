@@ -17,57 +17,55 @@ app = Flask(__name__)
 def detect_age():
     logging.info("Nhận được request...")
     
-    # Kiểm tra xem có file ảnh được gửi lên không
-    if 'image' not in request.files:
-        return jsonify({"error": "Không tìm thấy file ảnh trong request"}), 400
-
-    file = request.files['image']
+    image_data = None
     
+    # Ưu tiên đọc file từ form 'multipart/form-data'
+    if 'image' in request.files:
+        logging.info("Tìm thấy file trong request.files (form-data).")
+        file = request.files['image']
+        image_data = file.read()
+    # Nếu không có, thử đọc dữ liệu thô (raw binary)
+    elif request.data:
+        logging.info("Không có file trong form-data, thử đọc request.data (raw binary).")
+        image_data = request.data
+    else:
+        return jsonify({"error": "Không tìm thấy dữ liệu ảnh trong request"}), 400
+
     try:
-        # Đọc file ảnh từ request
-        filestr = file.read()
-        npimg = np.frombuffer(filestr, np.uint8)
+        # Đọc file ảnh từ dữ liệu đã lấy được
+        npimg = np.frombuffer(image_data, np.uint8)
         img = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
 
         if img is None:
-            return jsonify({"error": "Không thể đọc file ảnh"}), 400
+            return jsonify({"error": "Không thể đọc dữ liệu ảnh (invalid format)"}), 400
 
-        # --- Sử dụng DeepFace để phân tích ---
-        # `enforce_detection=False` để không báo lỗi nếu không tìm thấy khuôn mặt
-        # `actions` chỉ định chúng ta muốn phân tích những gì
+        # --- Phần còn lại của hàm xử lý giữ nguyên ---
         logging.info("Bắt đầu phân tích bằng DeepFace...")
         analysis_results = DeepFace.analyze(
             img_path=img, 
             actions=['age'], 
             enforce_detection=False
         )
+        # ... (toàn bộ phần xử lý và trả về JSON giữ nguyên như trước)
+        # ...
         logging.info("Phân tích hoàn tất.")
-
-        # `analysis_results` là một danh sách, mỗi phần tử là một khuôn mặt
         results_to_send = []
         for face_data in analysis_results:
-            # `face_data` là một dictionary chứa kết quả cho một khuôn mặt
             age = face_data.get('age')
-            region = face_data.get('region') # Tọa độ [x, y, w, h]
-            
+            region = face_data.get('region')
             warning = ""
             if age and age < 13:
                 warning = "CẢNH BÁO: Phát hiện trẻ em dưới 13 tuổi!"
-            
-            # Chuyển đổi box từ [x, y, w, h] sang [x1, y1, x2, y2]
             x, y, w, h = region['x'], region['y'], region['w'], region['h']
             box = [x, y, x + w, y + h]
-            
             results_to_send.append({
                 "box": box,
                 "estimated_age": age,
                 "warning": warning
             })
             logging.info(f"Phát hiện khuôn mặt, tuổi dự đoán: {age}. Cảnh báo: '{warning}'")
-
         if not results_to_send:
-             return jsonify({"message": "Không tìm thấy khuôn mặt nào."}), 200
-
+            return jsonify({"message": "Không tìm thấy khuôn mặt nào."}), 200
         return jsonify({"detections": results_to_send})
 
     except Exception as e:
